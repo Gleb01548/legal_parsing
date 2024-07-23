@@ -1,0 +1,29 @@
+[project]
+name = "legal_parsing"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "Gleb Budnik", email = "budnikgleb@mail.ru"},
+]
+dependencies = [
+    "fake-useragent>=1.5.1",
+    "beautifulsoup4>=4.12.3",
+    "notebook>=7.2.1",
+    "ipykernel>=6.29.5",
+    "pandas>=2.2.2",
+    "playwright>=1.45.0",
+    "ipython>=8.26.0",
+    "nest-asyncio>=1.6.0",
+    "tqdm>=4.66.4",
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+
+[tool.pdm]
+distribution = true
