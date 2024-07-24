@@ -14,12 +14,10 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 
-
-
 class ParsCodex:
-    def __init__(self, file_path: str) -> None:
-        self.file_path = file_path
-
+    def __init__(self):
+        pass
+    
     def goto(self, page, url, attempt: int, time_if_fail: int) -> None:
         for n in range(attempt):
             try:
@@ -74,8 +72,115 @@ class ParsCodex:
                 .find("div", class_="module relsuddoc")
                 .find_all("a")
             )
-        return page
+        return page  
 
+    def pars_parts_st(self, soup, st_info: dict) -> list:
+        data = []
+        for index, i in enumerate(
+            soup.find("div", class_="st-body content-body").find_all("p")
+        ):
+            i = i.text
+            may_int = i.split()[0][:-1]
+            if may_int.replace(".", "").isdigit():
+                part_st_info = {"part_st": float(may_int), "text": i}
+            elif not index:
+                part_st_info = {"part_st": 0, "text": i}
+            else:
+                data[-1]["text"] = data[-1]["text"] + "\n" + i
+                continue
+            part_st_info.update(deepcopy(st_info))
+            data.append(part_st_info)
+        return data
+
+    def pars_comment(self, soup, st_info) -> str:
+        soup_comment = soup.find("div", class_="rellawcomment-content content-body")
+        cont = False
+        comment_list = []
+        
+        if not soup_comment:
+            return None
+        
+        for i in soup_comment.find_all("p"):
+            i = i.text
+            if cont:
+                cont = False
+                continue
+            if "--------" in i:
+                cont = True
+                continue
+            comment_list.append(re.sub("<.*?>", "", i).replace("  ", "").strip())
+
+        comment = "".join(comment_list)
+        st_info_comm = deepcopy(st_info)
+        st_info_comm["text_comment"] = comment
+        return st_info_comm
+
+    def parse_link_decisions(self, soup, st_info, base_url: str) -> list:
+        if not soup.find("div", class_="module relsuddoc"):
+            return []
+
+        decisions_links = []
+        for i in soup.find("div", class_="module relsuddoc").find_all("a"):
+            link_decision_info = deepcopy(st_info)
+            link_decision_info.update(
+                {"href": base_url + i.attrs["href"], "name": i.text.strip()}
+            )
+            decisions_links.append(link_decision_info)
+        return decisions_links
+
+    def parse_desicions(self, brows, desicions_list: list) -> None:
+        for i in tqdm(desicions_list):
+            soup = self.pars(brows, url=i["href"])
+            i["text_decisions"] = soup.find(
+                "article", class_="suddoc_content content-body"
+            ).text
+
+    def run(self, st_info_list, base_url, proxy, path_dir_save):
+        
+        while st_info_list:
+            st_info = st_info_list.pop()
+    
+            # получаем страницу с конкретной статьей
+            soup_st = self.pars(
+                browser=browser, url=st_info["href"], use_button=self.check_stop_button
+            )
+
+            # парсим статьи (каждую часть отдельно)
+            res_st = self.pars_parts_st(soup=soup_st, st_info=st_info)
+
+            # парсим комментарий к статье
+            res_comment = self.pars_comment(soup=soup_st, st_info=st_info)
+
+            # парсим ссылки на судебные решения, которые указаны на странице со статьей
+            desicions_list = self.parse_link_decisions(
+                soup=soup_st, st_info=st_info, base_url=base_url
+            )
+
+            # парсим судебные решения
+            self.parse_desicions(brows=browser, desicions_list=desicions_list)
+
+            if st_info["num_st"].is_integer():
+                name = str(int(st_info["num_st"])).replace(".", "_")
+            else:
+                name = str(st_info["num_st"]).replace(".", "_")
+
+            name = name + ".csv"
+
+            if desicions_list:
+                pd.DataFrame(desicions_list).to_csv(
+                    jp(path_dir_save, "decisions", name), index=False
+                )
+            if res_comment:
+                pd.DataFrame(res_comment, index=[0]).to_csv(
+                    jp(path_dir_save, "comment", name), index=False
+                )
+            pd.DataFrame(res_st).to_csv(jp(path_dir_save, "st", name), index=False)
+            pd.DataFrame().to_csv(jp(path_dir_save, "_success", name.removesuffix(".csv")))
+
+class ParsCodexParallel:
+    def __init__(self) -> None:
+        pass
+    
     def get_codex_name_info(self, soup) -> dict:
         codex_name_info = {}
         for index, i in enumerate(
@@ -190,67 +295,6 @@ class ParsCodex:
                 table_content.append(element)
         return table_content
 
-    def pars_parts_st(self, soup, st_info: dict) -> list:
-        data = []
-        for index, i in enumerate(
-            soup.find("div", class_="st-body content-body").find_all("p")
-        ):
-            i = i.text
-            may_int = i.split()[0][:-1]
-            if may_int.replace(".", "").isdigit():
-                part_st_info = {"part_st": float(may_int), "text": i}
-            elif not index:
-                part_st_info = {"part_st": 0, "text": i}
-            else:
-                data[-1]["text"] = data[-1]["text"] + "\n" + i
-                continue
-            part_st_info.update(deepcopy(st_info))
-            data.append(part_st_info)
-        return data
-
-    def pars_comment(self, soup, st_info) -> str:
-        soup_comment = soup.find("div", class_="rellawcomment-content content-body")
-        cont = False
-        comment_list = []
-        
-        if not soup_comment:
-            return None
-        
-        for i in soup_comment.find_all("p"):
-            i = i.text
-            if cont:
-                cont = False
-                continue
-            if "--------" in i:
-                cont = True
-                continue
-            comment_list.append(re.sub("<.*?>", "", i).replace("  ", "").strip())
-
-        comment = "".join(comment_list)
-        st_info_comm = deepcopy(st_info)
-        st_info_comm["text_comment"] = comment
-        return st_info_comm
-
-    def parse_link_decisions(self, soup, st_info, base_url: str) -> list:
-        if not soup.find("div", class_="module relsuddoc"):
-            return []
-
-        decisions_links = []
-        for i in soup.find("div", class_="module relsuddoc").find_all("a"):
-            link_decision_info = deepcopy(st_info)
-            link_decision_info.update(
-                {"href": base_url + i.attrs["href"], "name": i.text.strip()}
-            )
-            decisions_links.append(link_decision_info)
-        return decisions_links
-
-    def parse_desicions(self, brows, desicions_list: list) -> None:
-        for i in tqdm(desicions_list):
-            soup = self.pars(brows, url=i["href"])
-            i["text_decisions"] = soup.find(
-                "article", class_="suddoc_content content-body"
-            ).text
-
     def check_st(self, table_content: dict, path_dir_save: str) -> dict:
         print("Всего требуется спарсить статей:", len(table_content))
         list_st_files = os.listdir(jp(path_dir_save, "_success"))
@@ -274,54 +318,27 @@ class ParsCodex:
         print("Таки нет:", len(new_table_content))
         return new_table_content
 
-    def run(self, browser, url, base_url, path_dir_save):
-        soup_title_codex = self.pars(browser=browser, url=url)
-        codex_name_info = self.get_codex_name_info(soup=soup_title_codex)
+    def run(self, browser, url, base_url, path_dir_save, list_proxy):
+        with sync_playwright() as playwright:
 
-        table_content = self.pars_link_st(
-            soup=soup_title_codex, url_codex=url, codex_name_info=codex_name_info
-        )
+            browser = playwright.firefox.launch(headless=True)
+            soup_title_codex = self.pars(browser=browser, url=url)
+            codex_name_info = self.get_codex_name_info(soup=soup_title_codex)
 
-        table_content = self.check_st(table_content, path_dir_save)
+            table_content = self.pars_link_st(
+                soup=soup_title_codex, url_codex=url, codex_name_info=codex_name_info
+            )
+
+            table_content = self.check_st(table_content, path_dir_save)
+            browser.close()
+            
+        for proxy in list_proxy:
+            pass
 
         for st_info in tqdm(table_content):
+            pass
 
-            # получаем страницу с конкретной статьей
-            soup_st = self.pars(
-                browser=browser, url=st_info["href"], use_button=self.check_stop_button
-            )
 
-            # парсим статьи (каждую часть отдельно)
-            res_st = self.pars_parts_st(soup=soup_st, st_info=st_info)
-
-            # парсим комментарий к статье
-            res_comment = self.pars_comment(soup=soup_st, st_info=st_info)
-
-            # парсим ссылки на судебные решения, которые указаны на странице со статьей
-            desicions_list = self.parse_link_decisions(
-                soup=soup_st, st_info=st_info, base_url=base_url
-            )
-
-            # парсим судебные решения
-            self.parse_desicions(brows=browser, desicions_list=desicions_list)
-
-            if st_info["num_st"].is_integer():
-                name = str(int(st_info["num_st"])).replace(".", "_")
-            else:
-                name = str(st_info["num_st"]).replace(".", "_")
-
-            name = name + ".csv"
-
-            if desicions_list:
-                pd.DataFrame(desicions_list).to_csv(
-                    jp(path_dir_save, "decisions", name), index=False
-                )
-            if res_comment:
-                pd.DataFrame(res_comment, index=[0]).to_csv(
-                    jp(path_dir_save, "comment", name), index=False
-                )
-            pd.DataFrame(res_st).to_csv(jp(path_dir_save, "st", name), index=False)
-            pd.DataFrame().to_csv(jp(path_dir_save, "_success", name.removesuffix(".csv")))
 
 
 
@@ -331,7 +348,7 @@ with open('conf.yaml') as fh:
 with sync_playwright() as playwright:
 
     browser = playwright.firefox.launch(headless=True)
-    pars_npa = ParsCodex(file_path=None)
+    pars_npa = ParsCodexParallel(file_path=None)
     pars_npa.run(
         browser=browser,
         url=read_data["url"],
