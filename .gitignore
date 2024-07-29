@@ -5,6 +5,7 @@ conf.yaml
 __pycache__/
 *.py[cod]
 *$py.class
+proxy.csv
 
 # C extensions
 *.so

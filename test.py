@@ -330,23 +330,23 @@ with open('conf.yaml') as fh:
 
 with sync_playwright() as playwright:
 
-    browser = playwright.firefox.launch(headless=True)
-    pars_npa = ParsCodex(file_path=None)
-    pars_npa.run(
-        browser=browser,
-        url=read_data["url"],
-        base_url=read_data["base_url"],
-        path_dir_save=read_data["path_dir_save"],
-    )
-    # for _ in range(100):
-    #     try:
-    #         browser = playwright.firefox.launch(headless=True)
-    #         pars_npa = ParsCodex(file_path=None)
-    #         pars_npa.run(
-    #             browser=browser,
-    #             url=read_data["url"],
-    #             base_url=read_data["base_url"],
-    #             path_dir_save=read_data["path_dir_save"],
-    #         )
-    #     except:
-    #         print("АХТУНГ!!!")
+    # browser = playwright.firefox.launch(headless=True)
+    # pars_npa = ParsCodex(file_path=None)
+    # pars_npa.run(
+    #     browser=browser,
+    #     url=read_data["url"],
+    #     base_url=read_data["base_url"],
+    #     path_dir_save=read_data["path_dir_save"],
+    # )
+    for _ in range(100):
+        try:
+            browser = playwright.firefox.launch(headless=True)
+            pars_npa = ParsCodex(file_path=None)
+            pars_npa.run(
+                browser=browser,
+                url=read_data["url"],
+                base_url=read_data["base_url"],
+                path_dir_save=read_data["path_dir_save"],
+            )
+        except:
+            print("АХТУНГ!!!")

@@ -2,8 +2,11 @@ import os
 import re
 import time
 import yaml
+import requests
+import pandas as pd
 from copy import deepcopy
 from os.path import join as jp
+from multiprocessing import Process, Manager
 
 import pandas as pd
 import playwright
@@ -14,35 +17,64 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 
+def test_proxy(list_proxy: list):
+    good_proxy = []
+    print(list_proxy)
+    for proxy in list_proxy:
+        proxy = {"http": f"http://{proxy}"}
+
+        url = "https://www.google.com/"
+
+        try:
+            response = requests.get(url, proxies=proxy)
+
+            if response.ok:
+                good_proxy.append(proxy)
+            print(response.text)
+
+        except requests.exceptions.RequestException:
+            continue
+    return good_proxy
+
+
+def test(path_proxy: str):
+    list_proxy = pd.read_csv(path_proxy, header=None, dtype=str)[0].to_list()
+    good_proxy = test_proxy(list_proxy)
+
+    print(f"Работает {len(good_proxy)} из {len(good_proxy)} прокси")
+
+
+def goto(page, url, attempt: int, time_if_fail: int) -> None:
+    for n in range(attempt):
+        try:
+            page.goto(url)
+            break
+        except PlaywrightTimeoutError:
+            print(f"Fail load info {n+1} from {attempt}")
+            time.sleep(time_if_fail)
+
+
+def pars(browser: object, url: str, use_button: object = None):
+    context = browser.new_context(
+        user_agent=UserAgent().random, viewport={"width": 1920, "height": 1080}
+    )
+    page = context.new_page()
+
+    goto(page, url, attempt=5, time_if_fail=30)
+    # Ожидание загрузки страницы и появления элемента
+    time.sleep(5)
+
+    if type(use_button) != type(None):
+        page = use_button(page)
+
+    soup = BeautifulSoup(page.content(), features="html.parser")
+    context.close()
+    return soup
+
+
 class ParsCodex:
     def __init__(self):
         pass
-    
-    def goto(self, page, url, attempt: int, time_if_fail: int) -> None:
-        for n in range(attempt):
-            try:
-                page.goto(url)
-                break
-            except PlaywrightTimeoutError:
-                print(f"Fail load info {n+1} from {attempt}")
-                time.sleep(time_if_fail)
-
-    def pars(self, browser: object, url: str, use_button: object = None):
-        context = browser.new_context(
-            user_agent=UserAgent().random, viewport={"width": 1920, "height": 1080}
-        )
-        page = context.new_page()
-
-        self.goto(page, url, attempt=5, time_if_fail=30)
-        # Ожидание загрузки страницы и появления элемента
-        time.sleep(2)
-
-        if type(use_button) != type(None):
-            page = use_button(page)
-
-        soup = BeautifulSoup(page.content(), features="html.parser")
-        context.close()
-        return soup
 
     def check_stop_button(self, page) -> object:
         if not BeautifulSoup(page.content(), features="html.parser").find_all(
@@ -66,16 +98,17 @@ class ParsCodex:
                 }"""
             )
             page.click("#add-relsuddoc-list2")
-            time.sleep(2)
+            time.sleep(5)
             new_len = len(
                 BeautifulSoup(page.content(), features="html.parser")
                 .find("div", class_="module relsuddoc")
                 .find_all("a")
             )
-        return page  
+        return page
 
     def pars_parts_st(self, soup, st_info: dict) -> list:
         data = []
+        # print(soup.text)
         for index, i in enumerate(
             soup.find("div", class_="st-body content-body").find_all("p")
         ):
@@ -96,10 +129,10 @@ class ParsCodex:
         soup_comment = soup.find("div", class_="rellawcomment-content content-body")
         cont = False
         comment_list = []
-        
+
         if not soup_comment:
             return None
-        
+
         for i in soup_comment.find_all("p"):
             i = i.text
             if cont:
@@ -130,57 +163,103 @@ class ParsCodex:
 
     def parse_desicions(self, brows, desicions_list: list) -> None:
         for i in tqdm(desicions_list):
-            soup = self.pars(brows, url=i["href"])
+            soup = pars(brows, url=i["href"])
             i["text_decisions"] = soup.find(
                 "article", class_="suddoc_content content-body"
             ).text
 
-    def run(self, st_info_list, base_url, proxy, path_dir_save):
-        
-        while st_info_list:
-            st_info = st_info_list.pop()
-    
-            # получаем страницу с конкретной статьей
-            soup_st = self.pars(
-                browser=browser, url=st_info["href"], use_button=self.check_stop_button
+    def run(self, browser, st_info, base_url, path_dir_save):
+
+        # получаем страницу с конкретной статьей
+        # print(1)
+        soup_st = pars(
+            browser=browser, url=st_info["href"], use_button=self.check_stop_button
+        )
+
+        # парсим статьи (каждую часть отдельно)
+        # print(2)
+        res_st = self.pars_parts_st(soup=soup_st, st_info=st_info)
+
+        # парсим комментарий к статье
+        # print(3)
+        res_comment = self.pars_comment(soup=soup_st, st_info=st_info)
+
+        # парсим ссылки на судебные решения, которые указаны на странице со статьей
+        # print(4)
+        desicions_list = self.parse_link_decisions(
+            soup=soup_st, st_info=st_info, base_url=base_url
+        )
+
+        # парсим судебные решения
+        # print(5)
+        self.parse_desicions(brows=browser, desicions_list=desicions_list)
+
+        # print(6)
+        if st_info["num_st"].is_integer():
+            name = str(int(st_info["num_st"])).replace(".", "_")
+        else:
+            name = str(st_info["num_st"]).replace(".", "_")
+
+        name = name + ".csv"
+
+        if desicions_list:
+            pd.DataFrame(desicions_list).to_csv(
+                jp(path_dir_save, "decisions", name), index=False
             )
-
-            # парсим статьи (каждую часть отдельно)
-            res_st = self.pars_parts_st(soup=soup_st, st_info=st_info)
-
-            # парсим комментарий к статье
-            res_comment = self.pars_comment(soup=soup_st, st_info=st_info)
-
-            # парсим ссылки на судебные решения, которые указаны на странице со статьей
-            desicions_list = self.parse_link_decisions(
-                soup=soup_st, st_info=st_info, base_url=base_url
+        if res_comment:
+            pd.DataFrame(res_comment, index=[0]).to_csv(
+                jp(path_dir_save, "comment", name), index=False
             )
+        pd.DataFrame(res_st).to_csv(jp(path_dir_save, "st", name), index=False)
+        pd.DataFrame().to_csv(jp(path_dir_save, "_success", name.removesuffix(".csv")))
 
-            # парсим судебные решения
-            self.parse_desicions(brows=browser, desicions_list=desicions_list)
-
-            if st_info["num_st"].is_integer():
-                name = str(int(st_info["num_st"])).replace(".", "_")
-            else:
-                name = str(st_info["num_st"]).replace(".", "_")
-
-            name = name + ".csv"
-
-            if desicions_list:
-                pd.DataFrame(desicions_list).to_csv(
-                    jp(path_dir_save, "decisions", name), index=False
-                )
-            if res_comment:
-                pd.DataFrame(res_comment, index=[0]).to_csv(
-                    jp(path_dir_save, "comment", name), index=False
-                )
-            pd.DataFrame(res_st).to_csv(jp(path_dir_save, "st", name), index=False)
-            pd.DataFrame().to_csv(jp(path_dir_save, "_success", name.removesuffix(".csv")))
 
 class ParsCodexParallel:
     def __init__(self) -> None:
         pass
-    
+
+    def pars(self, browser: object, url: str, use_button: object = None):
+        context = browser.new_context(
+            user_agent=UserAgent().random, viewport={"width": 1920, "height": 1080}
+        )
+        page = context.new_page()
+
+        self.goto(page, url, attempt=5, time_if_fail=30)
+        # Ожидание загрузки страницы и появления элемента
+        time.sleep(2)
+
+        if type(use_button) != type(None):
+            page = use_button(page)
+
+        soup = BeautifulSoup(page.content(), features="html.parser")
+        context.close()
+        return soup
+
+    def pars_codex(self, proxy, st_info_list, base_url, path_dir_save):
+
+        with sync_playwright() as playwright:
+            browser = playwright.firefox.launch(headless=True, proxy=proxy)
+            codex_pars = ParsCodex()
+
+            while st_info_list:
+
+                try:
+                    st_info = st_info_list.pop()
+                except IndexError:
+                    continue
+
+                try:
+
+                    codex_pars.run(
+                        browser=browser,
+                        st_info=st_info,
+                        base_url=base_url,
+                        path_dir_save=path_dir_save,
+                    )
+                except Exception as e:
+                    print("Проблема:", st_info)
+                    print(e)
+
     def get_codex_name_info(self, soup) -> dict:
         codex_name_info = {}
         for index, i in enumerate(
@@ -275,7 +354,7 @@ class ParsCodexParallel:
                     pass
 
                 name_st = i.text.strip()
-                href = url_codex + i.find("a").attrs["href"][1:]
+                href = url_codex + "/" + i.find("a").attrs["href"][1:]
 
                 for name in [
                     "num_r",
@@ -301,69 +380,89 @@ class ParsCodexParallel:
         new_table_content = []
         utr = 0
         for st_info in table_content:
-            if "утратила силу" in st_info["name_st"].lower():
+            if (
+                "утратила силу" in st_info["name_st"].lower()
+                or "утратили силу" in st_info["name_st"].lower()
+            ):
                 utr += 1
                 continue
-            
+
             if st_info["num_st"].is_integer():
                 name = str(int(st_info["num_st"])).replace(".", "_")
             else:
                 name = str(st_info["num_st"]).replace(".", "_")
-                
+
             if not name in list_st_files:
                 new_table_content.append(st_info)
+
         print("Из них:")
         print("Таки утратили силу и потому не нужны:", utr)
-        print("Таки спарщено уже:", len(table_content) - len(new_table_content))
+        print("Таки спарщено уже:", len(table_content) - len(new_table_content) - utr)
         print("Таки нет:", len(new_table_content))
-        return new_table_content
+        return new_table_content[::-1]
 
-    def run(self, browser, url, base_url, path_dir_save, list_proxy):
+    def run(
+        self, url, base_url, path_dir_save, list_proxy, use_serv_api, codex_with_part
+    ):
+
         with sync_playwright() as playwright:
 
             browser = playwright.firefox.launch(headless=True)
-            soup_title_codex = self.pars(browser=browser, url=url)
+            soup_title_codex = pars(browser=browser, url=url)
             codex_name_info = self.get_codex_name_info(soup=soup_title_codex)
 
+            if codex_with_part:
+                url_for_pars_st = url
+            else:
+                url_for_pars_st = base_url
+
             table_content = self.pars_link_st(
-                soup=soup_title_codex, url_codex=url, codex_name_info=codex_name_info
+                soup=soup_title_codex,
+                url_codex=url_for_pars_st,
+                codex_name_info=codex_name_info,
             )
 
             table_content = self.check_st(table_content, path_dir_save)
             browser.close()
-            
-        for proxy in list_proxy:
-            pass
 
-        for st_info in tqdm(table_content):
-            pass
+        manager = Manager()
+        st_info_list = manager.list()
+        st_info_list.extend(table_content)
+
+        if use_serv_api:
+            list_proxy += [None]
+
+        processes = [
+            Process(
+                target=self.pars_codex,
+                args=[proxy, st_info_list, base_url, path_dir_save],
+            )
+            for proxy in list_proxy
+        ]
+
+        for process in processes:
+            process.start()
+
+        for process in processes:
+            process.join()
 
 
+list_proxy = []
+for i in pd.read_csv("proxy.csv", dtype="str")["proxy"].to_list():
+    i = i.split(":")
+    list_proxy.append(
+        {"server": f"{i[0]}:{i[1]}", "username": i[-2], "password": i[-1]}
+    )
 
-
-
-with open('conf.yaml') as fh:
+with open("conf.yaml") as fh:
     read_data = yaml.load(fh, Loader=yaml.FullLoader)
 
-with sync_playwright() as playwright:
-
-    browser = playwright.firefox.launch(headless=True)
-    pars_npa = ParsCodexParallel(file_path=None)
-    pars_npa.run(
-        browser=browser,
-        url=read_data["url"],
-        base_url=read_data["base_url"],
-        path_dir_save=read_data["path_dir_save"],
-    )
-    # for _ in range(100):
-    #     try:
-    #         browser = playwright.firefox.launch(headless=True)
-    #         pars_npa = ParsCodex(file_path=None)
-    #         pars_npa.run(
-    #             browser=browser,
-    #             url=read_data["url"],
-    #             base_url=read_data["base_url"],
-    #             path_dir_save=read_data["path_dir_save"],
-    #         )
-    #     except:
-    #         print("АХТУНГ!!!")
+pars_npa = ParsCodexParallel()
+pars_npa.run(
+    url=read_data["url"],
+    base_url=read_data["base_url"],
+    path_dir_save=read_data["path_dir_save"],
+    list_proxy=list_proxy,
+    use_serv_api=True,
+    codex_with_part=read_data["codex_with_part"],
+)

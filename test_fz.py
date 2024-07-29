@@ -14,9 +14,6 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS = "ALL:@SECLEVEL=1"
 
-h = html2text.HTML2Text()
-h.ignore_links = True
-
 def goto(page, url, attempt: int, time_if_fail: int) -> None:
     for n in range(attempt):
         try:
@@ -46,40 +43,59 @@ def pars(browser: object, url: str, use_button: object = None):
     return soup
 
 
-with sync_playwright() as playwright:
-    browser = playwright.firefox.launch(headless=True)
-    soup = pars(browser=browser, url="http://actual.pravo.gov.ru/list.html#date_period=%2C24.07.2024&kinds=107&sort=-date")
-    # print(soup.find("body"))
+# with sync_playwright() as playwright:
+#     browser = playwright.firefox.launch(headless=True)
+#     soup = pars(browser=browser, url="http://actual.pravo.gov.ru/list.html#date_period=%2C24.07.2024&kinds=107&sort=-date")
+#     # print(soup.find("body"))
     
-    doc_list = [i.text for i in soup.find("body").find_all("p")]
+#     doc_list = [i.text for i in soup.find("body").find_all("p")]
     
-    res = {"end_doc": "\n".join(doc_list[-6:])}
+#     res = {"end_doc": "\n".join(doc_list[-6:])}
     
-    head = ""
-    for index, i in enumerate(doc_list):
-        if i.startswith("Статья "):
-            break
-        head += "/n"
-        head += i
+#     head = ""
+#     for index, i in enumerate(doc_list):
+#         if i.startswith("Статья "):
+#             break
+#         head += "/n"
+#         head += i
         
-    res["head"] = head.replace("/n", "\n").strip()
+#     res["head"] = head.replace("/n", "\n").strip()
     
-    print(res["head"])
+#     print(res["head"])
     
-    res = []
-    st_info = None
-    for i in doc_list[index:-6]:
-        if i.startswith("Статья "):
-            st_info = {"num_st": float(i.split()[1]), "name_st": i}
-            res.append(st_info)
-        else:
-            may_int = i.split()[0][:-1]
-            st_without_parts = "text" not in res[-1]
+#     res = []
+#     st_info = None
+#     for i in doc_list[index:-6]:
+#         if i.startswith("Статья "):
+#             st_info = {"num_st": float(i.split()[1]), "name_st": i}
+#             res.append(st_info)
+#         else:
+#             may_int = i.split()[0][:-1]
+#             st_without_parts = "text" not in res[-1]
             
-            if may_int.replace(".", "").isdigit():
-                pass
+#             if may_int.replace(".", "").isdigit():
+#                 pass
                 
-    print(res)
+#     print(res)
             
     
     # print(h.handle(soup.find("body").find_all("p")))
+
+import pandas as pd
+res = []
+for i in pd.read_csv("proxy.csv", dtype="str")["proxy"].to_list():
+    i = i.split(":")
+    res.append({"server":f"{i[0]}:{i[1]}", "username":i[-2], "password":i[-1]})
+    
+    
+with sync_playwright() as playwright:
+    for i in res:
+        browser = playwright.firefox.launch(headless=True)
+        print(i)
+        res = pars(browser=browser, url="http://actual.pravo.gov.ru/list.html#date_period=%2C24.07.2024&kinds=107&sort=-date")
+        # print(res.text)
+#         {
+#     "server": "45.10.65.141:8000",
+#     "username": "d2a0nR",
+#     "password": "VBsSU2",
+# }
