@@ -113,7 +113,10 @@ class ParsCodex:
             soup.find("div", class_="st-body content-body").find_all("p")
         ):
             i = i.text
+            if not i:
+                continue
             may_int = i.split()[0][:-1]
+
             if may_int.replace(".", "").isdigit():
                 part_st_info = {"part_st": float(may_int), "text": i}
             elif not index:
@@ -163,7 +166,16 @@ class ParsCodex:
 
     def parse_desicions(self, brows, desicions_list: list) -> None:
         for i in tqdm(desicions_list):
-            soup = pars(brows, url=i["href"])
+            for _ in range(5):
+                try:
+                    soup = pars(brows, url=i["href"])
+                    break
+                except:
+                    time.sleep(10)
+            else:
+                i["text_decisions"] = None
+                continue                
+                
             i["text_decisions"] = soup.find(
                 "article", class_="suddoc_content content-body"
             ).text
@@ -194,6 +206,7 @@ class ParsCodex:
         # print(5)
         self.parse_desicions(brows=browser, desicions_list=desicions_list)
 
+        # 
         # print(6)
         if st_info["num_st"].is_integer():
             name = str(int(st_info["num_st"])).replace(".", "_")
@@ -455,14 +468,19 @@ for i in pd.read_csv("proxy.csv", dtype="str")["proxy"].to_list():
     )
 
 with open("conf.yaml") as fh:
-    read_data = yaml.load(fh, Loader=yaml.FullLoader)
+    read_data = yaml.load(fh, Loader=yaml.FullLoader)["pars_codex"]
+    
 
 pars_npa = ParsCodexParallel()
-pars_npa.run(
-    url=read_data["url"],
-    base_url=read_data["base_url"],
-    path_dir_save=read_data["path_dir_save"],
-    list_proxy=list_proxy,
-    use_serv_api=True,
-    codex_with_part=read_data["codex_with_part"],
-)
+for i in read_data:
+    key = list(i.keys())[0]
+    print(key)
+    i = i[key]
+    pars_npa.run(
+        url=i["url"],
+        base_url=i["base_url"],
+        path_dir_save=i["path_dir_save"],
+        list_proxy=list_proxy,
+        use_serv_api=True,
+        codex_with_part=i["codex_with_part"],
+    )

@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 proxy.csv
+proxy_test.csv
 
 # C extensions
 *.so
